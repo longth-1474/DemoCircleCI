@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HelloApp</string>
+    <string name="add_to_cart">Ajouter Au Panier</string>
+    <string name="size">Taille</string>
+    <string name="color">Couleur</string>
+    <string name="price">Prix</string>
+    <string name="welcome">Bienvenue</string>
+    <string name="continue_title">Continuer</string>
+</resources>
