@@ -47,3 +47,12 @@ jobs:
       - store_artifacts:
           path: app/build/reports
           destination: reports
+      - run:
+          name: Install fastlane
+          command: bundle install
+      - run:
+          name: Deploy the app to the internal track
+          command: bundle exec fastlane buildAppDevelop
+      - store_artifacts:
+          path: app/build/outputs/apk/debug
+          destination: reports
