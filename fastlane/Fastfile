@@ -1,43 +1,202 @@
-# This file contains the fastlane.tools configuration
-# You can find the documentation at https://docs.fastlane.tools
-#
-# For a list of all available actions, check out
-#
-#     https://docs.fastlane.tools/actions
-#
-# For a list of all available plugins, check out
-#
-#     https://docs.fastlane.tools/plugins/available-plugins
-#
-
-# Uncomment the line if you want fastlane to automatically update itself
-# update_fastlane
-
 default_platform(:android)
 
 platform :android do
-  desc "Runs all the tests"
-  lane :test do
-    gradle(task: "test")
-  end
 
-  desc "Submit a new Beta Build to Crashlytics Beta"
-  lane :beta do
-    gradle(task: "clean assembleRelease")
-    crashlytics
-  
-    # sh "your_script.sh"
-    # You can also use other beta testing services here
-  end
+#++++++++++++++++++++INPUT NOTE+++++++++++++++++++++++++++
 
-  desc "Deploy a new version to the Google Play"
-  lane :deploy do
-    gradle(task: "clean assembleRelease")
-    upload_to_play_store
-  end
+lane :releaseNote do |options|
+	releaseNoteInput = prompt(
+		text: "Please enter your release notes. This note will be pushed on DeployGate: ",
+		multi_line_end_keyword: "END"
+		)
+	time1 = Time.new
+	time = time1.strftime("%Y-%m-%d %H:%M:%S")
+	releaseNote =   time + "   " + releaseNoteInput
+    #save to file
+    commit = last_git_commit
+    File.write("./temp/releaseNote.txt", releaseNote)
+    contentSave =
+   "
+    New build number has been uploaded successfully to Firebase!
+    Platform : Android
+    BuildType : #{options[:buildType]}
+    Author : #{commit[:author]}
+    Author email : #{commit[:author_email]}
+    Note : #{releaseNote}
+   "
+   File.write("./temp/content.txt", contentSave)
+end
 
-  desc("Assemble the debug app and tests APKs")
-  lane(:assemble) do
-    gradle(task: "assemble assembleAndroidTest", gradle_path: '../DemoCircleCI/gradlew')
+#++++++++++++++++++++PUSH SLACK++++++++++++++++++++
+
+lane :pushSlack do |options|
+    	slack(
+          message: "App successfully released!",
+          channel: "#channel",
+          success: true,
+          payload: {
+            "Build Date" => Time.new.to_s,
+            "Built by" => "Jenkins",
+          },
+          default_payloads: [:git_branch, :git_author],
+          attachment_properties: {
+            thumb_url: "http://example.com/path/to/thumb.png",
+            fields: [{
+              title: "My Field",
+              value: "My Value",
+              short: true
+            }]
+          }
+        )
+end
+
+#++++++++++++++++++++ BUILD ANDROID ++++++++++++++++++++
+
+#++++++++++++++++++++ DEV ++++++++++++++++++++
+
+lane :develop do |options|
+	releaseNote(
+			buildType: "Develop"
+		)
+  #build
+  begin
+   	buildAppDevelop
+rescue => ex
+	UI.error(ex)
+	next
+end
+begin
+ 	uploadDeployGateDev
+rescue => ex
+	UI.error(ex)
+	next
+end
+begin
+	pushSlack
+rescue => ex
+	UI.error(ex)
+	next
+end
+end
+
+#++++++++++++++++++++ STG ++++++++++++++++++++
+
+lane :staging do |options|
+		releaseNote(
+			buildType: "Staging"
+			)
+  #build
+  begin
+  	buildAppStaging
+rescue => ex
+	UI.error(ex)
+	next
+end
+begin
+	uploadDeployGateStaging
+rescue => ex
+	UI.error(ex)
+	next
+end
+begin
+	pushSlack
+rescue => ex
+	UI.error(ex)
+	next
+end
+end
+
+#++++++++++++++++++++ BUILD ++++++++++++++++++++
+
+lane :buildAppDevelop do
+    #build
+    gradle(task: 'clean')
+    gradle(task: 'assemble', build_type: 'debug')
+end
+
+#++++++++++++++++++++
+
+lane :buildAppStaging do
+    #build
+    gradle(task: 'clean')
+    gradle(task: 'assemble', build_type: 'release')
+end
+
+#++++++++++++++++++++
+
+#+++++++++++++++++++ Upload Deploygate Android ++++++++++++++++++++++++++
+
+#+++++++++++++++++++ DEV ++++++++++++++++++++++++++
+
+lane :uploadDeployGateDev do |options|
+  releaseNote = File.read("./temp/releaseNote.txt")
+  va = File.absolute_path("../app/build/outputs/apk/")
+  va2 = va+'/*/*/*.apk'
+  path = Dir[va2][0]
+  deploygate(
+        api_token: "#{ENV['DEYPLOYGATE_API_KEY']}",
+        user: "#{ENV['DEYPLOYGATE_USER']}",
+        apk: path,
+        message: releaseNote,
+        distribution_key: "#{ENV['DISTRIBUTION_KEY_DEV']}"
+    )
+  begin
+    pushSlack
+  rescue => ex
+    UI.error(ex)
   end
+end
+
+#+++++++++++++++++++ STG ++++++++++++++++++++++++++
+
+lane :uploadDeployGateStaging do |options|
+  releaseNote = File.read("./temp/releaseNote.txt")
+  va = File.absolute_path("../app/build/outputs/apk/")
+  va2 = va+'/*/*/*.apk'
+  path = Dir[va2][0]
+  deploygate(
+        api_token: "#{ENV['DEYPLOYGATE_API_KEY']}",
+        user: "#{ENV['DEYPLOYGATE_USER']}",
+        apk: path,
+        message: releaseNote,
+        distribution_key: "#{ENV['DISTRIBUTION_KEY_STG']}"
+    )
+  begin
+    pushSlack
+  rescue => ex
+    UI.error(ex)
+  end
+end
+
+#+++++++++++++ FIREBASE TEST LAB +++++++++++++++++++
+lane :instrumentation_tests_testlab do |options|
+  assemble_build(build_flavor:options[:build_flavor], build_type:"Debug")
+  @app_apk = Actions.lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
+
+  assemble_build(build_flavor:options[:build_flavor] + "Debug", build_type:"AndroidTest")
+  @android_test_apk = Actions.lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
+
+  run_tests_firebase_testlab(
+    project_id:"your-firebase-project-id",
+    app_apk: @app_apk,
+    android_test_apk: @android_test_apk,
+    devices: [
+      {
+          model: "Nexus6P",
+          version: "27"
+      }
+    ],
+    delete_firebase_files: true
+  )
+end
+
+#++++++++++ INSTRUMENTATION TEST +++++++++++++++++++
+lane :instrumentation_tests do
+  automated_test_emulator_run(
+    AVD_setup_path: "fastlane/AVD_setup.json",
+    AVD_recreate_new: false,
+    AVD_clean_after: false,
+    gradle_task: "connectedDebugAndroidTest")
+end
+
 end
